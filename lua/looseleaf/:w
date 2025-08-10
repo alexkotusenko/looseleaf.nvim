@@ -247,8 +247,9 @@ function M.float(opts)
 
   -- Optional: map 'q' to close
   vim.api.nvim_buf_set_keymap(buf, 'n', 'q', ':wq<CR>', { noremap = true, silent = true })
-	-- Map escape to close 
+	-- Map escape to close in both insert and normal mode
 	vim.api.nvim_buf_set_keymap(buf, 'n', '<Esc>', ':wq<CR>', { noremap = true, silent = true })
+	vim.api.nvim_buf_set_keymap(buf, 'i', '<Esc>', ':wq<CR>', { noremap = true, silent = true })
 end
 
 function M.split(opts)
