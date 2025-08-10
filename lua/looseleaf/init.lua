@@ -61,10 +61,18 @@ local function generate_filename()
 	return newname
 end
 
-function M.new()
-  ensure_dir()
-  local filename = generate_filename() -- last.txt updated
-  vim.cmd("edit " .. filename)
+function M.full(opts)
+	local arg = opts.args
+
+	local filename = handle_any_argument(arg)
+	if filename == nil then return end
+
+	if type(filename) == "string" then
+		vim.cmd("edit " .. filename)
+	else
+		-- callback fn
+		filename()
+	end
 end
 
 local function try_get_special_name(arg)
@@ -79,24 +87,82 @@ local function try_get_special_name(arg)
   return name
 end
 
-function M.float(opts)
-	local arg = opts.args
+-- no input
+-- returns 
+--	nil if failed + reports
+--	string (filename) if ok
+local function handle_last_file() 
+	local last_path = config.configs .. "last.txt"
+	local saved_path = vim.fn.filereadable(last_path) == 1 and vim.fn.readfile(last_path)[1] or nil
 
-	-- Validate argument
-	if arg and arg ~= "" then
-		if type(arg) ~= "string" or (arg:lower() ~= "last" and arg:sub(1, 1) ~= ":") then
-			vim.notify("Looseleaf: Invalid argument '" .. arg .. "'. Only 'last', ':<special_name>' or nothing is allowed.", vim.log.levels.ERROR, {
+	if not saved_path or saved_path == "" then
+		vim.notify("Looseleaf: No recent file found in last.txt. Use ':LooseleafFloat' to create a new one.", vim.log.levels.INFO, {
+			title = "Looseleaf",
+		})
+		return nil
+	end
+
+	return vim.fn.expand(saved_path)
+end
+
+
+-- takes in an arg which may not be a valid special name
+-- returns 
+--	nil if failed + reports before returning
+--	string to resolved filepath if ok 
+local function handle_special_name(arg)
+	local special_name_cut = try_get_special_name(arg)
+	if special_name_cut then -- valid special name
+		-- TODO look it up in the config.special
+		-- TODO error reporting
+		local value = config.special[special_name_cut]
+		if value ~= nil then
+			-- found
+			filename = vim.fn.expand(config.dir .. value)
+		else 
+			-- not found
+			vim.notify("Looseleaf: Special scratchpad name '" .. arg .. "' parsed but not configured.", vim.log.levels.INFO, {
 				title = "Looseleaf",
 			})
-			return
+			return nil
+		end
+	else -- invalid special name
+		vim.notify("Looseleaf: Could not parse resolve name for the special scratchpad.", vim.log.levels.ERROR, {
+			title = "Looseleaf",
+		})
+		return nil
+	end
+end
+
+-- input: arg
+-- output:
+--	nil if failed + reporting
+--	string (filepath) if ok | function if ok + `pick` used
+function handle_any_argument(arg)
+	-- [empty] (new file)
+	-- pick
+	-- last
+	-- :<special_name>	if arg ~= nil then
+	
+	-- validate argument
+	
+	if arg and arg ~= "" then
+		if type(arg) ~= "string" or (arg:lower() ~= "last" and arg:lower() ~= "pick" and arg:sub(1, 1) ~= ":") then
+			vim.notify("Looseleaf: Invalid argument '" .. arg .. "'. Only 'last', 'pick', ':<special_name>' or nothing is allowed.", vim.log.levels.ERROR, {
+				title = "Looseleaf",
+			})
+			return nil
 		end
 	end
 
-  ensure_dir()
+	ensure_dir()
 
-	-- local filename = generate_filename()
 	local filename
+	local picked = false
 
+	-- match against the type of argument
+	
+	-- last
 	if arg == "last" then
 		local last_path = config.configs .. "last.txt"
 		local saved_path = vim.fn.filereadable(last_path) == 1 and vim.fn.readfile(last_path)[1] or nil
@@ -105,39 +171,54 @@ function M.float(opts)
 			vim.notify("Looseleaf: No recent file found in last.txt. Use ':LooseleafFloat' to create a new one.", vim.log.levels.INFO, {
 				title = "Looseleaf",
 			})
-			return
+			return nil
 		end
 
 		filename = vim.fn.expand(saved_path)
-	elseif arg == nil or arg == "" then
-		filename = generate_filename()
+
+	-- pick (use oil)
+	elseif arg == "pick" then
+		picked = true
+	
+	-- :<special_name>
 	elseif arg:sub(1, 1) == ":" then
-		-- handle special name
+
 		local special_name_cut = try_get_special_name(arg)
 		if special_name_cut then -- not nil
-			-- TODO look it up in the config.special
-			-- TODO error reporting
 			local value = config.special[special_name_cut]
 			if value ~= nil then
 				-- found
 				filename = vim.fn.expand(config.dir .. value)
 			else 
 				-- not found
-				vim.notify("Looseleaf: Special scratchpad name parsed but not configured.", vim.log.levels.INFO, {
+				vim.notify("Looseleaf: Special scratchpad name '" .. arg .. "' parsed but not configured.", vim.log.levels.INFO, {
 					title = "Looseleaf",
 				})
-				return
+				return nil
 			end
-		else
-			vim.notify("Looseleaf: Could not parse resolve name for the special scratchpad.", vim.log.levels.ERROR, {
-				title = "Looseleaf",
-			})
-			return
 		end
-	else
-		vim.notify("Looseleaf: Invalid argument '" .. tostring(arg) .. "'. Only 'last', ':<special_name>' or nothing is allowed.", vim.log.levels.ERROR, {
-			title = "Looseleaf",
-		})
+
+	-- new file
+	elseif arg == nil or arg == "" then
+		filename = generate_filename()	
+	end
+	
+	-- returning
+	-- case 1) pick -> function
+	if picked then
+		return function()
+			require("oil").open(config.dir)
+		end
+	end
+	-- case 2) -> string (filepath)
+	return filename
+end
+
+function M.float(opts)
+	local arg = opts.args
+
+	local filename = handle_any_argument(arg)
+	if filename == nil then
 		return
 	end
 
@@ -157,9 +238,12 @@ function M.float(opts)
   }
   local win = vim.api.nvim_open_win(buf, true, opts)
 
-	vim.cmd("edit " .. filename)
-
-  vim.api.nvim_win_set_option(win, "winhl", "Normal:Normal,StatusLine:StatusLine")
+	if type(filename) == "string" then
+		vim.cmd("edit " .. filename)
+	else
+		-- it's a callback fn
+		filename()
+	end
 
   -- Optional: map 'q' to close
   vim.api.nvim_buf_set_keymap(buf, 'n', 'q', '<cmd>close<CR>', { noremap = true, silent = true })
@@ -167,59 +251,10 @@ end
 
 function M.split(opts)
 	local arg = opts.args
+
+  local filename = handle_any_argument(arg) -- Err(nil) Ok(string / function)
 	
-	if arg ~= nil then
-		if type(arg) ~= "string" or (arg:lower() ~= "last" and arg:lower() ~= "pick" and arg:sub(1, 1) ~= ":") then
-			vim.notify("Looseleaf: Invalid argument '" .. arg .. "'. Only 'last', 'pick', ':<special_name>' or nothing is allowed.", vim.log.levels.ERROR, {
-				title = "Looseleaf",
-			})
-			return
-		end
-	end
-
-  ensure_dir()
-
-	-- we know that the arg is either "" or "last" or "split"
-	local filename
-	local picked = false
-	-- open last file
-	if arg == "last" then
-		local last_path = config.configs .. "last.txt"
-		local saved_path = vim.fn.filereadable(last_path) == 1 and vim.fn.readfile(last_path)[1] or nil
-
-		if not saved_path or saved_path == "" then
-			vim.notify("Looseleaf: No recent file found in last.txt. Use ':LooseleafFloat' to create a new one.", vim.log.levels.INFO, {
-				title = "Looseleaf",
-			})
-			return
-		end
-
-		filename = vim.fn.expand(saved_path)
-
-	-- pick a file with oil
-	elseif arg == "pick" then
-		picked = true
-	elseif arg:sub(1, 1) == ":" then
-		-- handle special name
-		local special_name_cut = try_get_special_name(arg)
-		if special_name_cut then -- not nil
-			-- TODO look it up in the config.special
-			-- TODO error reporting
-			local value = config.special[special_name_cut]
-			if value ~= nil then
-				-- found
-				filename = vim.fn.expand(config.dir .. value)
-			else 
-				-- not found
-				vim.notify("Looseleaf: Special scratchpad name parsed but not configured.", vim.log.levels.INFO, {
-					title = "Looseleaf",
-				})
-				return
-			end
-		end
-	elseif arg == nil or arg == "" then
-		filename = generate_filename()	
-	end
+	if filename == nil then return end
 
   -- Calculate 20% of screen height
   local total_lines = vim.o.lines
@@ -229,12 +264,14 @@ function M.split(opts)
   vim.cmd("split")
   vim.api.nvim_win_set_height(0, target_height)
 	if picked then
-		local oil = require("oil")
-		-- Open Oil in your plugin's directory
-		oil.open(config.dir)
+		-- ...
 	else
-		-- new file or the last file
-		vim.cmd("edit " .. filename)
+		if type(filename) == "string" then
+			vim.cmd("edit " .. filename)
+		else 
+			-- otherwise it's a callback fn
+			filename()
+		end
 	end
 end
 
@@ -249,7 +286,7 @@ function M.list()
 
   print("Scratchpads in " .. config.dir)
 	if #files == 0 then
-		print("[NONE YET]")
+		print("[EMPTY]")
 	end
   for i, file in ipairs(files) do
 		local name = vim.fn.fnamemodify(file, ":t")
@@ -275,12 +312,12 @@ function M.list_special()
 
   local is_empty = true
   for key, val in pairs(config.special) do
-    print(":" .. key .. " -> " .. val)
+    print(":" .. key .. " " .. val)
     is_empty = false
   end
 
   if is_empty then
-    print("[NONE YET]")
+    print("[EMPTY]")
   end
 end
 
@@ -301,7 +338,9 @@ function M.setup(opts)
 
 	config.special = opts.special or {}
 
-  vim.api.nvim_create_user_command("LooseleafFull", M.new, {})
+  vim.api.nvim_create_user_command("LooseleafFull", function(opts)
+		M.full(opts)
+	end, { nargs = "?" })
 	vim.api.nvim_create_user_command("LooseleafSplit", function(opts)
 		M.split(opts)
 	end, { nargs = "?" })
