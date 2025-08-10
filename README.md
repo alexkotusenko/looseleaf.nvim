@@ -2,8 +2,8 @@
 # Looseleaf.nvim
 
 [Watch the demo](./demo.mp4)
-![Screenshot 1](./screnshot1.png)
-![Screenshot 2](./screnshot2.png)
+![Screenshot 1](./screenshot1.png)
+![Screenshot 2](./screenshot2.png)
 
 This is a plugin for efficiently working with **persistent scratchpad buffers**.
 
